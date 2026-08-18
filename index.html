@@ -3,14 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>EROGE SONG QUIZ Multiplayer v2.0.1 FIX</title>
-  <link rel="stylesheet" href="./style.css?v=200">
+  <title>EROGE SONG QUIZ Multiplayer v2.1.1</title>
+  <link rel="stylesheet" href="./style.css?v=211">
 </head>
 <body>
 <main>
   <header class="topbar">
     <div>
-      <h1>EROGE SONG QUIZ <small>Multiplayer v2.0.1 FIX</small></h1>
+      <h1>EROGE SONG QUIZ <small>Multiplayer v2.1.1</small></h1>
       <p>각자 정답을 입력하고, 먼저 맞힌 사람의 정답이 모두에게 공개됩니다.</p>
     </div>
     <div class="room-head" id="roomHead" hidden>
@@ -62,15 +62,15 @@
   </section>
 
   <section id="game" hidden>
-    <div class="game-grid">
-      <section class="card quiz-card">
-        <div class="game-meta">
-          <span id="progress">- / -</span>
-          <strong id="type">SONG</strong>
-          <span id="yearBadge"></span>
-          <span id="hostBadge" hidden>방장</span>
-        </div>
+    <div class="game-meta top-game-meta">
+      <span id="progress">- / -</span>
+      <strong id="type">SONG</strong>
+      <span id="yearBadge"></span>
+      <span id="hostBadge" hidden>방장</span>
+    </div>
 
+    <div class="main-quiz-layout">
+      <section class="card media-column">
         <div class="youtube-visual-shell">
           <div class="video-curtain" id="videoCurtain">
             <div class="musicmark">♪</div>
@@ -81,7 +81,7 @@
           <div class="youtube-compact"><div id="player"></div></div>
         </div>
 
-        <div class="player-tools">
+        <div class="player-tools" id="playerTools">
           <button id="audioPlay">▶ 재생</button>
           <button id="audioPause">⏸ 일시정지</button>
           <button id="audioRestart">↺ 처음부터</button>
@@ -119,6 +119,19 @@
           </div>
         </div>
 
+        <div class="host-controls" id="hostControls" hidden>
+          <button id="hostReveal" class="secondary">정답 공개</button>
+          <button id="hostNext" class="primary">다음 문제</button>
+        </div>
+      </section>
+
+      <section class="card answer-column">
+        <h3>작품 정보</h3>
+        <div class="answer-placeholder" id="answerPlaceholder">
+          <b>정답 공개 시</b>
+          <span>작품 이미지 + 정보가 표시됩니다.</span>
+        </div>
+
         <div class="public-answer" id="publicAnswer" hidden>
           <div class="answer-image-wrap">
             <img id="answerImage" alt="대표 이미지" hidden>
@@ -130,11 +143,6 @@
             <div><span>보컬</span><b id="answerVocal"></b></div>
             <div><span>연도</span><b id="answerYear"></b></div>
           </div>
-        </div>
-
-        <div class="host-controls" id="hostControls" hidden>
-          <button id="hostReveal" class="secondary">정답 공개</button>
-          <button id="hostNext" class="primary">다음 문제</button>
         </div>
       </section>
 
@@ -164,9 +172,9 @@
   </section>
 </main>
 
-<script src="./firebase-config.js?v=201"></script>
+<script src="./firebase-config.js?v=211"></script>
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/12.16.0/firebase-database-compat.js"></script>
-<script src="./multiplayer.js?v=2011"></script>
+<script src="./multiplayer.js?v=211"></script>
 </body>
 </html>

@@ -146,7 +146,8 @@ async function createRoom(){
     meta:{
       hostId:playerId,createdAt:Date.now(),mode,year:year||null,
       status:"playing",questionIndex:0,questionToken:1,
-      order,gameSolvedBy:null,songSolvedBy:null,forcedReveal:false
+      order,gameSolvedBy:null,songSolvedBy:null,forcedReveal:false,
+      playback:{state:"playing",position:0,updatedAt:Date.now()}
     },
     players:{
       [playerId]:{nickname,score:0,joinedAt:Date.now(),online:true}
@@ -180,12 +181,139 @@ async function addEvent(text,type="system"){
   await set(e,{text,type,at:serverTimestamp()});
 }
 
+
+let applyingRemotePlayback=false;
+let lastPlaybackSignature="";
+
+function getPlayerPosition(){
+  try{return ytReady&&ytPlayer ? Number(ytPlayer.getCurrentTime()||0) : 0;}
+  catch(e){return 0;}
+}
+
+async function hostSetPlayback(state, position=null){
+  if(!isHost || !db || !roomCode) return;
+  const pos = position===null ? getPlayerPosition() : Number(position||0);
+  await set(ref(db,`rooms/${roomCode}/meta/playback`),{
+    state,
+    position:pos,
+    updatedAt:Date.now()
+  });
+}
+
+function desiredPlaybackPosition(pb){
+  if(!pb) return 0;
+  let pos=Number(pb.position||0);
+  if(pb.state==="playing" && pb.updatedAt){
+    pos += Math.max(0,(Date.now()-Number(pb.updatedAt))/1000);
+  }
+  return pos;
+}
+
+function applyRemotePlayback(pb){
+  if(!pb || !ytReady || !ytPlayer || !currentQuestion) return;
+
+  const sig=`${pb.state}|${Math.round(Number(pb.position||0)*10)}|${pb.updatedAt||0}`;
+  if(sig===lastPlaybackSignature) return;
+  lastPlaybackSignature=sig;
+
+  applyingRemotePlayback=true;
+  try{
+    const target=desiredPlaybackPosition(pb);
+    const current=Number(ytPlayer.getCurrentTime()||0);
+    if(Math.abs(current-target)>1.5){
+      ytPlayer.seekTo(target,true);
+    }
+    if(pb.state==="playing"){
+      ytPlayer.playVideo();
+      $("#playerStatus").textContent=isHost?"재생 중":"호스트와 동기화 · 재생 중";
+    }else{
+      ytPlayer.pauseVideo();
+      $("#playerStatus").textContent=isHost?"일시정지":"호스트와 동기화 · 일시정지";
+    }
+  }catch(e){
+    console.warn("[EROGE MP] playback sync failed",e);
+  }finally{
+    setTimeout(()=>{applyingRemotePlayback=false;},150);
+  }
+}
+
+function applyHostControlUI(){
+  const locked=!isHost;
+  $("#audioPlay").disabled=locked;
+  $("#audioPause").disabled=locked;
+  $("#audioRestart").disabled=locked;
+  $("#playerTools").classList.toggle("participant-locked",locked);
+  if(locked){
+    $("#audioPlay").title="영상 재생은 호스트가 제어합니다.";
+    $("#audioPause").title="영상 재생은 호스트가 제어합니다.";
+    $("#audioRestart").title="영상 재생은 호스트가 제어합니다.";
+  }
+}
+
+// 관리자 정답 팝업: 호스트 전용
+let adminWindow=null;
+const ADMIN_PASSWORD="1234";
+
+function adminData(){
+  if(!currentQuestion || !roomState) return null;
+  return {
+    progress:`${Number(roomState.questionIndex||0)+1} / ${roomState.order?.length||0}`,
+    game:currentQuestion.game||currentQuestion.anime||"-",
+    song:currentQuestion.song||"-",
+    type:currentQuestion.type||"-",
+    vocal:currentQuestion.vocal||"-",
+    year:currentQuestion.year||"-",
+    videoId:candidateIds[candidateIndex]||currentQuestion.videoId||"-"
+  };
+}
+function adminEsc(v){
+  return String(v??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
+}
+function renderAdminWindow(){
+  if(!isHost || !adminWindow || adminWindow.closed) return;
+  const a=adminData();
+  const body=a?`
+    <div class="badge">${adminEsc(a.progress)}</div>
+    <h2>${adminEsc(a.game)}</h2>
+    <dl>
+      <dt>곡 제목</dt><dd>${adminEsc(a.song)}</dd>
+      <dt>구분</dt><dd>${adminEsc(a.type)}</dd>
+      <dt>보컬</dt><dd>${adminEsc(a.vocal)}</dd>
+      <dt>연도</dt><dd>${adminEsc(a.year)}</dd>
+      <dt>YouTube ID</dt><dd class="mono">${adminEsc(a.videoId)}</dd>
+    </dl>`:`<p>현재 문제가 없습니다.</p>`;
+  adminWindow.document.open();
+  adminWindow.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>EROGE SONG QUIZ ADMIN</title>
+  <style>*{box-sizing:border-box}body{margin:0;padding:18px;background:#0f1115;color:#f4f5f7;font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif}.head{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}.head h1{font-size:17px;margin:0}.live{font-size:11px;color:#7ce5c6}.badge{display:inline-block;padding:5px 9px;border-radius:999px;background:#26322f;color:#7ce5c6;font-size:12px;font-weight:800;margin-bottom:12px}h2{font-size:20px;line-height:1.35;margin:0 0 18px}dl{margin:0}dt{font-size:11px;color:#8e97a5;margin-top:12px}dd{font-size:16px;font-weight:800;margin:3px 0 0;word-break:break-word}.mono{font-family:Consolas,monospace;font-size:13px;color:#b9c0ca}.tip{margin-top:22px;padding-top:12px;border-top:1px solid #2a3038;color:#6f7885;font-size:11px}</style>
+  </head><body><div class="head"><h1>EROGE SONG QUIZ · 관리자 정답</h1><span class="live">HOST</span></div>${body}<div class="tip">다음 문제로 이동하면 자동 갱신됩니다.</div></body></html>`);
+  adminWindow.document.close();
+}
+function openAdminWindow(){
+  if(!isHost) return;
+  const pw=prompt("관리자 비밀번호를 입력하세요.");
+  if(pw===null) return;
+  if(pw!==ADMIN_PASSWORD){alert("비밀번호가 올바르지 않습니다.");return;}
+  if(!adminWindow || adminWindow.closed){
+    adminWindow=window.open("","EROGE_MP_ADMIN","popup=yes,width=430,height=520,resizable=yes,scrollbars=yes");
+  }
+  if(!adminWindow){alert("팝업이 차단되었습니다. 이 사이트의 팝업을 허용해주세요.");return;}
+  renderAdminWindow();
+  adminWindow.focus();
+}
+document.addEventListener("keydown",e=>{
+  if(isHost && e.ctrlKey && e.shiftKey && (e.key==="A"||e.key==="a")){
+    e.preventDefault();
+    openAdminWindow();
+  }
+});
+
 function enterRoom(){
   $("#setup").hidden=true; $("#game").hidden=false; $("#roomHead").hidden=false;
   $("#roomCodeLabel").textContent=roomCode;
   $("#nicknameLabel").textContent=nickname;
   $("#hostBadge").hidden=!isHost;
   $("#hostControls").hidden=!isHost;
+  applyHostControlUI();
 
   const pref=ref(db,`rooms/${roomCode}/players/${playerId}`);
   onDisconnect(pref).update({online:false});
@@ -197,6 +325,8 @@ function enterRoom(){
     if(roomState.status==="finished"){showComplete();return;}
     if(prevToken!==roomState.questionToken)loadRoomQuestion();
     else renderSolvedState();
+    applyRemotePlayback(roomState.playback);
+    renderAdminWindow();
   });
 
   playersUnsub=onValue(ref(db,`rooms/${roomCode}/players`),snap=>{
@@ -229,11 +359,13 @@ function loadRoomQuestion(){
   $("#gameInput").value=""; $("#songInput").value="";
   hideSuggestions("game");hideSuggestions("song");
   $("#publicAnswer").hidden=true;
+  $("#answerPlaceholder").hidden=false;
   $("#videoCurtain").hidden=false;
 
   setupCandidates(currentQuestion);
   cueCurrentCandidate();
   renderSolvedState();
+  renderAdminWindow();
 }
 
 function renderSolvedState(){
@@ -254,6 +386,7 @@ function renderSolvedState(){
 
   if(gs||ss||forced){
     $("#publicAnswer").hidden=false;
+    $("#answerPlaceholder").hidden=true;
     $("#answerGame").textContent=(gs||forced)?currentQuestion.game:"???";
     $("#answerSong").textContent=(ss||forced)?currentQuestion.song:"???";
     $("#answerVocal").textContent=(ss||forced)?(currentQuestion.vocal||"-"):"???";
@@ -261,6 +394,7 @@ function renderSolvedState(){
     setImage((gs&&ss)||forced ? currentQuestion.image : "");
   }else{
     $("#publicAnswer").hidden=true;
+    $("#answerPlaceholder").hidden=false;
   }
 
   // 영상은 둘 다 맞혀졌거나 방장이 강제 공개했을 때만 공개
@@ -336,7 +470,8 @@ async function hostNext(){
   }
   await update(ref(db,`rooms/${roomCode}/meta`),{
     questionIndex:next,questionToken:Number(roomState.questionToken||0)+1,
-    gameSolvedBy:null,songSolvedBy:null,forcedReveal:false
+    gameSolvedBy:null,songSolvedBy:null,forcedReveal:false,
+    playback:{state:"playing",position:0,updatedAt:Date.now()}
   });
   await addEvent(`${next+1}번 문제 시작!`,"system");
 }
@@ -379,11 +514,22 @@ function injectYouTubeAPI(){
       width:"100%",height:"100%",videoId:"",
       playerVars:{controls:1,rel:0,playsinline:1,fs:1,origin:location.origin},
       events:{
-        onReady:()=>{ytReady=true;ytPlayer.setVolume(Number($("#volume").value)||70);if(currentQuestion)cueCurrentCandidate();},
+        onReady:()=>{
+          ytReady=true;
+          ytPlayer.setVolume(Number($("#volume").value)||70);
+          if(currentQuestion)cueCurrentCandidate();
+          if(roomState?.playback) setTimeout(()=>applyRemotePlayback(roomState.playback),250);
+        },
         onStateChange:e=>{
-          if(e.data===YT.PlayerState.PLAYING)$("#playerStatus").textContent="재생 중";
-          else if(e.data===YT.PlayerState.PAUSED)$("#playerStatus").textContent="일시정지";
-          else if(e.data===YT.PlayerState.BUFFERING)$("#playerStatus").textContent="버퍼링 중...";
+          if(e.data===YT.PlayerState.PLAYING){
+            $("#playerStatus").textContent=isHost?"재생 중":"호스트와 동기화 · 재생 중";
+            if(isHost && !applyingRemotePlayback) hostSetPlayback("playing");
+          }else if(e.data===YT.PlayerState.PAUSED){
+            $("#playerStatus").textContent=isHost?"일시정지":"호스트와 동기화 · 일시정지";
+            if(isHost && !applyingRemotePlayback) hostSetPlayback("paused");
+          }else if(e.data===YT.PlayerState.BUFFERING){
+            $("#playerStatus").textContent="버퍼링 중...";
+          }
         },
         onError:e=>{
           if([100,101,150].includes(e.data)&&candidateIndex+1<candidateIds.length){
@@ -405,12 +551,30 @@ function cueCurrentCandidate(){
   $("#candidateText").textContent=`후보 ${candidateIndex+1}/${candidateIds.length}`;
   ytPlayer.loadVideoById({videoId:candidateIds[candidateIndex],startSeconds:0});
   ytPlayer.setVolume(Number($("#volume").value)||70);
+  setTimeout(()=>{
+    if(roomState?.playback) applyRemotePlayback(roomState.playback);
+  },300);
 }
 
-$("#audioPlay").onclick=()=>{if(ytReady)ytPlayer.playVideo();};
-$("#audioPause").onclick=()=>{if(ytReady)ytPlayer.pauseVideo();};
-$("#audioRestart").onclick=()=>{if(ytReady){ytPlayer.seekTo(0,true);ytPlayer.playVideo();}};
-$("#volume").oninput=e=>{if(ytReady)ytPlayer.setVolume(Number(e.target.value));};
+$("#audioPlay").onclick=async()=>{
+  if(!isHost || !ytReady)return;
+  ytPlayer.playVideo();
+  await hostSetPlayback("playing");
+};
+$("#audioPause").onclick=async()=>{
+  if(!isHost || !ytReady)return;
+  ytPlayer.pauseVideo();
+  await hostSetPlayback("paused");
+};
+$("#audioRestart").onclick=async()=>{
+  if(!isHost || !ytReady)return;
+  ytPlayer.seekTo(0,true);
+  ytPlayer.playVideo();
+  await hostSetPlayback("playing",0);
+};
+$("#volume").oninput=e=>{
+  if(ytReady)ytPlayer.setVolume(Number(e.target.value));
+};
 
 $("#createRoom").onclick=async()=>{
   const btn=$("#createRoom");
