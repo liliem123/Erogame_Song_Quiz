@@ -4,6 +4,114 @@ let candidateIds=[], candidateIndex=0, candidateTried=[];
 let selectedMode="all";
 let selectedYear=null;
 
+
+/* ===== 관리자 정답창 =====
+   단축키: Ctrl + Shift + A
+   기본 비밀번호: 1234
+   비밀번호를 바꾸려면 아래 ADMIN_PASSWORD 값만 수정하세요.
+*/
+const ADMIN_PASSWORD="1234";
+let adminWindow=null;
+
+function escapeAdminHtml(v){
+  return String(v ?? "")
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;");
+}
+
+function adminAnswerData(){
+  const q=(typeof current==="function") ? current() : null;
+  if(!q) return null;
+  return {
+    progress: (typeof idx!=="undefined" && typeof order!=="undefined") ? `${idx+1} / ${order.length}` : "-",
+    work: q.anime || q.game || q.title || "-",
+    song: q.song || "-",
+    type: q.type || "-",
+    vocal: q.vocal || "-",
+    year: q.year || "-",
+    videoId: (typeof currentCandidate==="function" && currentCandidate()) || q.videoId || "-"
+  };
+}
+
+function renderAdminWindow(){
+  if(!adminWindow || adminWindow.closed) return;
+  const a=adminAnswerData();
+  const body=a ? `
+    <div class="badge">${escapeAdminHtml(a.progress)}</div>
+    <h2>${escapeAdminHtml(a.work)}</h2>
+    <dl>
+      <dt>곡 제목</dt><dd>${escapeAdminHtml(a.song)}</dd>
+      <dt>구분</dt><dd>${escapeAdminHtml(a.type)}</dd>
+      <dt>보컬</dt><dd>${escapeAdminHtml(a.vocal)}</dd>
+      <dt>연도</dt><dd>${escapeAdminHtml(a.year)}</dd>
+      <dt>YouTube ID</dt><dd class="mono">${escapeAdminHtml(a.videoId)}</dd>
+    </dl>` :
+    `<p class="empty">현재 진행 중인 문제가 없습니다.</p>`;
+
+  adminWindow.document.open();
+  adminWindow.document.write(`<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>EROGE SONG QUIZ - ADMIN</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;padding:18px;background:#0f1115;color:#f4f5f7;font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif}
+  .head{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+  .head h1{font-size:17px;margin:0}
+  .live{font-size:11px;color:#7ce5c6}
+  .badge{display:inline-block;padding:5px 9px;border-radius:999px;background:#26322f;color:#7ce5c6;font-size:12px;font-weight:800;margin-bottom:12px}
+  h2{font-size:20px;line-height:1.35;margin:0 0 18px}
+  dl{margin:0}
+  dt{font-size:11px;color:#8e97a5;margin-top:12px}
+  dd{font-size:16px;font-weight:800;margin:3px 0 0;word-break:break-word}
+  .mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px;color:#b9c0ca}
+  .empty{color:#9ca3af}
+  .tip{margin-top:22px;padding-top:12px;border-top:1px solid #2a3038;color:#6f7885;font-size:11px}
+</style>
+</head>
+<body>
+  <div class="head"><h1>EROGE SONG QUIZ · 관리자 정답</h1><span class="live">LIVE</span></div>
+  ${body}
+  <div class="tip">메인 퀴즈에서 다음 문제로 넘어가면 이 창도 자동 갱신됩니다.</div>
+</body>
+</html>`);
+  adminWindow.document.close();
+}
+
+function openAdminAnswerWindow(){
+  const pw=window.prompt("관리자 비밀번호를 입력하세요.");
+  if(pw===null) return;
+  if(pw!==ADMIN_PASSWORD){
+    window.alert("비밀번호가 올바르지 않습니다.");
+    return;
+  }
+
+  if(!adminWindow || adminWindow.closed){
+    adminWindow=window.open(
+      "",
+      "EROGE_SONG_QUIZ_ADMIN",
+      "popup=yes,width=430,height=520,resizable=yes,scrollbars=yes"
+    );
+  }
+  if(!adminWindow){
+    window.alert("팝업이 차단되었습니다. 이 사이트의 팝업을 허용해주세요.");
+    return;
+  }
+  renderAdminWindow();
+  adminWindow.focus();
+}
+
+document.addEventListener("keydown",e=>{
+  if(e.ctrlKey && e.shiftKey && (e.key==="A" || e.key==="a")){
+    e.preventDefault();
+    openAdminAnswerWindow();
+  }
+});
+
+
 const $=s=>document.querySelector(s);
 
 function norm(s){
@@ -119,6 +227,7 @@ function cueVideo(id,autoPlay=true){
   }catch(e){setStatus("영상 준비 실패");}
 }
 function cueCurrentCandidate(){
+  setTimeout(renderAdminWindow,0);
   const vid=currentCandidate();
   if(!vid){
     setStatus("재생 가능한 후보 영상 없음");
@@ -173,6 +282,7 @@ function setAnswerImage(url){
 
 function loadQuestion(){
   const q=current();
+  setTimeout(renderAdminWindow,0);
   state={anime:false,song:false,revealed:false};
 
   $("#progress").textContent=`${idx+1} / ${order.length}`;
