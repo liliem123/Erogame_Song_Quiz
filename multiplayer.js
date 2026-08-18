@@ -170,7 +170,7 @@ async function joinRoom(){
   roomCode=code; nickname=name; playerId=randomPlayerId(); isHost=false;
   const pref=ref(db,`rooms/${roomCode}/players/${playerId}`);
   await set(pref,{nickname,score:0,joinedAt:Date.now(),online:true});
-  onDisconnect(pref).update({online:false});
+  
   await addEvent(`${nickname}님이 참가했습니다.`,"system");
   enterRoom();
 }
@@ -307,16 +307,36 @@ document.addEventListener("keydown",e=>{
   }
 });
 
+
+function registerDisconnectCleanup(){
+  if(!db || !roomCode || !playerId) return;
+
+  const playerRef=ref(db,`rooms/${roomCode}/players/${playerId}`);
+  const leaveEventRef=push(ref(db,`rooms/${roomCode}/events`));
+
+  // Firebase 서버가 연결 종료를 감지하면 참가자 행을 실제로 삭제한다.
+  // 탭 닫기 / 브라우저 종료 / 네트워크 단절에도 동작한다.
+  onDisconnect(playerRef).remove();
+
+  // 같은 disconnect 시점에 퇴장 메시지도 서버에서 기록한다.
+  onDisconnect(leaveEventRef).set({
+    text:`${nickname}님이 퇴장했습니다.`,
+    type:"system",
+    at:serverTimestamp()
+  });
+}
+
 function enterRoom(){
   $("#setup").hidden=true; $("#game").hidden=false; $("#roomHead").hidden=false;
   $("#roomCodeLabel").textContent=roomCode;
   $("#nicknameLabel").textContent=nickname;
   $("#hostBadge").hidden=!isHost;
   $("#hostControls").hidden=!isHost;
+  registerDisconnectCleanup();
   applyHostControlUI();
 
   const pref=ref(db,`rooms/${roomCode}/players/${playerId}`);
-  onDisconnect(pref).update({online:false});
+  
 
   roomUnsub=onValue(ref(db,`rooms/${roomCode}/meta`),snap=>{
     if(!snap.exists()){alert("방이 종료되었습니다.");location.reload();return;}
@@ -478,10 +498,10 @@ async function hostNext(){
 
 function renderPlayers(){
   const arr=Object.entries(playerState).map(([id,p])=>({id,...p})).sort((a,b)=>(b.score||0)-(a.score||0));
-  $("#playerCount").textContent=arr.filter(x=>x.online!==false).length;
+  $("#playerCount").textContent=arr.length;
   $("#players").innerHTML=arr.map((p,i)=>`
     <div class="player-row ${p.id===playerId?"me":""}">
-      <span>${p.online===false?"○":"●"}</span>
+      <span>●</span>
       <span>${esc(p.nickname)} ${p.id===roomState?.hostId?'<em class="hostmark">HOST</em>':""}</span>
       <b>${p.score||0}</b>
     </div>`).join("");
