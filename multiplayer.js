@@ -1,8 +1,32 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js";
-import {
-  getDatabase, ref, set, get, update, onValue, runTransaction,
-  push, remove, onDisconnect, serverTimestamp
-} from "https://www.gstatic.com/firebasejs/12.2.1/firebase-database.js";
+// Firebase compat CDN wrappers.
+// GitHub Pages에서 ES module import가 실패해 전체 JS가 멈추는 경우를 피하기 위해
+// 공식 compat CDN을 사용하고, 기존 멀티플레이 코드와 동일한 함수 형태로 감싼다.
+function initializeApp(config){ return firebase.initializeApp(config); }
+function getDatabase(app){ return firebase.database(); }
+function ref(database,path){ return database.ref(path); }
+function set(r,value){ return r.set(value); }
+function get(r){ return r.once("value"); }
+function update(r,value){ return r.update(value); }
+function onValue(r,callback){
+  r.on("value",callback);
+  return ()=>r.off("value",callback);
+}
+function runTransaction(r,updater){
+  return new Promise((resolve,reject)=>{
+    r.transaction(
+      updater,
+      (error,committed,snapshot)=>{
+        if(error){ reject(error); return; }
+        resolve({committed,snapshot});
+      },
+      false
+    );
+  });
+}
+function push(r){ return r.push(); }
+function remove(r){ return r.remove(); }
+function onDisconnect(r){ return r.onDisconnect(); }
+function serverTimestamp(){ return firebase.database.ServerValue.TIMESTAMP; }
 
 const $=s=>document.querySelector(s);
 const cfg=window.EROGE_FIREBASE_CONFIG||{};
@@ -70,11 +94,26 @@ $("#hostMode").onchange=e=>{$("#hostYear").hidden=e.target.value!=="year";};
 function initFirebase(){
   if(!configured){
     $("#firebaseWarning").hidden=false;
+    $("#firebaseWarning").textContent="Firebase 설정값을 확인해주세요.";
     return false;
   }
-  firebaseApp=initializeApp(cfg);
-  db=getDatabase(firebaseApp);
-  return true;
+
+  try{
+    if(typeof firebase==="undefined"){
+      throw new Error("Firebase SDK를 불러오지 못했습니다.");
+    }
+    firebaseApp=initializeApp(cfg);
+    db=getDatabase(firebaseApp);
+    console.log("[EROGE MP] Firebase initialized:", cfg.databaseURL);
+    $("#firebaseWarning").hidden=true;
+    return true;
+  }catch(e){
+    console.error("[EROGE MP] Firebase init failed:",e);
+    $("#firebaseWarning").hidden=false;
+    $("#firebaseWarning").textContent=`Firebase 초기화 실패: ${e.message}`;
+    db=null;
+    return false;
+  }
 }
 
 function makeOrder(mode,year,count){
@@ -367,15 +406,43 @@ function cueCurrentCandidate(){
   ytPlayer.loadVideoById({videoId:candidateIds[candidateIndex],startSeconds:0});
   ytPlayer.setVolume(Number($("#volume").value)||70);
 }
-let apiLoaded=false;
 
 $("#audioPlay").onclick=()=>{if(ytReady)ytPlayer.playVideo();};
 $("#audioPause").onclick=()=>{if(ytReady)ytPlayer.pauseVideo();};
 $("#audioRestart").onclick=()=>{if(ytReady){ytPlayer.seekTo(0,true);ytPlayer.playVideo();}};
 $("#volume").oninput=e=>{if(ytReady)ytPlayer.setVolume(Number(e.target.value));};
 
-$("#createRoom").onclick=createRoom;
-$("#joinRoom").onclick=joinRoom;
+$("#createRoom").onclick=async()=>{
+  const btn=$("#createRoom");
+  const old=btn.textContent;
+  btn.disabled=true;
+  btn.textContent="방 생성 중...";
+  try{
+    await createRoom();
+  }catch(e){
+    console.error("[EROGE MP] createRoom failed:",e);
+    alert(`방 생성 실패\n${e.message || e}`);
+  }finally{
+    btn.disabled=false;
+    btn.textContent=old;
+  }
+};
+
+$("#joinRoom").onclick=async()=>{
+  const btn=$("#joinRoom");
+  const old=btn.textContent;
+  btn.disabled=true;
+  btn.textContent="참가 중...";
+  try{
+    await joinRoom();
+  }catch(e){
+    console.error("[EROGE MP] joinRoom failed:",e);
+    alert(`방 참가 실패\n${e.message || e}`);
+  }finally{
+    btn.disabled=false;
+    btn.textContent=old;
+  }
+};
 $("#submitGame").onclick=()=>submitAnswer("game");
 $("#submitSong").onclick=()=>submitAnswer("song");
 $("#gameInput").oninput=()=>updateSuggestions("game");
@@ -390,10 +457,14 @@ document.addEventListener("click",e=>{
 
 (async()=>{
   try{
+    const firebaseOK=initFirebase();
     await loadQuiz();
-    initFirebase();
+    if(!firebaseOK){
+      console.warn("[EROGE MP] Quiz loaded but Firebase is not ready.");
+    }
+    console.log("[EROGE MP] quiz rows:",quizData.length);
   }catch(e){
-    console.error(e);
+    console.error("[EROGE MP] startup error:",e);
     $("#firebaseWarning").hidden=false;
     $("#firebaseWarning").textContent=`초기화 오류: ${e.message}`;
   }
