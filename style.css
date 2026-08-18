@@ -1,6 +1,6 @@
 [hidden]{display:none!important}
 *{box-sizing:border-box}
-html{font-size:80%}
+html{font-size:100%}
 body{margin:0;background:#0e1116;color:#f3f5f7;font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif}
 button,input,select{font:inherit}
 main{max-width:1680px;margin:auto;padding:18px 22px 50px}
@@ -67,11 +67,9 @@ button{border:0;border-radius:10px;padding:9px 13px;font-weight:800;cursor:point
 .completion-card{text-align:center;margin-top:30px}.completion-card h2{font-size:2.3rem}
 
 @media(max-width:1280px){
-  html{font-size:78%}
   .main-quiz-layout{grid-template-columns:minmax(560px,1.4fr) minmax(230px,.65fr) minmax(280px,.75fr)}
 }
 @media(max-width:1050px){
-  html{font-size:90%}
   .main-quiz-layout{grid-template-columns:1fr}
   .answer-column{min-height:auto}
   .answer-placeholder{min-height:300px}
