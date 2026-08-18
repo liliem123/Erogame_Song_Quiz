@@ -34,7 +34,7 @@ button{border:0;border-radius:10px;padding:9px 13px;font-weight:800;cursor:point
 
 .youtube-visual-shell{position:relative;aspect-ratio:16/9;overflow:hidden;border-radius:14px;background:#05070a}
 .youtube-compact,#player,.youtube-compact iframe{width:100%!important;height:100%!important}
-.video-curtain{position:absolute;inset:0;z-index:20;background:linear-gradient(135deg,#171c25,#080a0e);display:flex;flex-direction:column;justify-content:center;align-items:center;gap:7px;pointer-events:none}
+.video-curtain{position:absolute;inset:0;z-index:20;background:linear-gradient(135deg,#171c25,#080a0e);display:flex;flex-direction:column;justify-content:center;align-items:center;gap:7px;pointer-events:auto}
 .musicmark{font-size:5rem}.video-curtain span{font-size:.95rem;color:#88929e}
 .player-tools{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:9px}
 .player-tools button{background:#29303a;color:#fff}.player-tools label{display:flex;gap:8px;align-items:center;color:#98a1ad;font-size:.95rem}.player-tools input{width:125px;padding:0}
@@ -82,3 +82,8 @@ button{border:0;border-radius:10px;padding:9px 13px;font-weight:800;cursor:point
   .topbar{flex-direction:column}
   .public-answer{grid-template-columns:1fr}
 }
+
+.youtube-visual-shell.quiz-locked{user-select:none;-webkit-user-select:none}
+.video-curtain.quiz-locked{pointer-events:auto!important;cursor:default;touch-action:none}
+.youtube-visual-shell.quiz-locked .youtube-compact,
+.youtube-visual-shell.quiz-locked iframe{pointer-events:none!important}

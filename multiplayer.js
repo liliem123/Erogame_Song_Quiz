@@ -381,6 +381,7 @@ function loadRoomQuestion(){
   $("#publicAnswer").hidden=true;
   $("#answerPlaceholder").hidden=false;
   $("#videoCurtain").hidden=false;
+  applyQuizLockUI();
 
   setupCandidates(currentQuestion);
   cueCurrentCandidate();
@@ -419,6 +420,7 @@ function renderSolvedState(){
 
   // 영상은 둘 다 맞혀졌거나 방장이 강제 공개했을 때만 공개
   $("#videoCurtain").hidden=!!((gs&&ss)||forced);
+  applyQuizLockUI();
 }
 
 function setImage(url){
@@ -526,13 +528,58 @@ function showComplete(){
   if(ytReady&&ytPlayer)try{ytPlayer.pauseVideo()}catch(e){}
 }
 
+
+function quizIsRevealed(){
+  if(!roomState) return false;
+  return !!((roomState.gameSolvedBy&&roomState.songSolvedBy)||roomState.forcedReveal);
+}
+function isAnswerTypingTarget(el){
+  return !!el && (el.id==="gameInput"||el.id==="songInput"||(el.closest&&el.closest(".autocomplete-wrap")));
+}
+function shouldBlockQuizKey(e){
+  if(quizIsRevealed()||isAnswerTypingTarget(e.target)) return false;
+  if(isHost&&e.ctrlKey&&e.shiftKey&&(e.key==="A"||e.key==="a")) return false;
+  const k=(e.key||"").toLowerCase(), c=e.code||"";
+  return new Set(["f","k","j","l","m","c","arrowleft","arrowright","arrowup","arrowdown"," ","spacebar","home","end","pageup","pagedown"]).has(k)
+      || new Set(["Space","ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Home","End","PageUp","PageDown"]).has(c);
+}
+document.addEventListener("keydown",e=>{
+  if(shouldBlockQuizKey(e)){e.preventDefault();e.stopImmediatePropagation();}
+},true);
+document.addEventListener("contextmenu",e=>{
+  if(!quizIsRevealed()&&e.target.closest&&e.target.closest(".youtube-visual-shell")){
+    e.preventDefault();e.stopImmediatePropagation();
+  }
+},true);
+function applyQuizLockUI(){
+  const locked=!quizIsRevealed();
+  const curtain=$("#videoCurtain");
+  const shell=document.querySelector(".youtube-visual-shell");
+  if(curtain) curtain.classList.toggle("quiz-locked",locked);
+  if(shell) shell.classList.toggle("quiz-locked",locked);
+  setQuizMediaMetadata(!locked);
+}
+
+
+// ===== Media Session quiz metadata =====
+function setQuizMediaMetadata(revealed=false){
+  if (!("mediaSession" in navigator) || typeof MediaMetadata === "undefined") return;
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: revealed && currentQuestion ? (currentQuestion.song || "정답 공개") : "재생 중...",
+      artist: revealed && currentQuestion ? (currentQuestion.vocal || currentQuestion.artist || "") : "어떤 곡일까요?",
+      album: revealed && currentQuestion ? (currentQuestion.anime || currentQuestion.game || "EROGE SONG QUIZ") : "EROGE SONG QUIZ"
+    });
+  } catch(e) { console.debug("Media Session metadata unavailable", e); }
+}
+
 // YouTube player
 function injectYouTubeAPI(){
   if(apiLoaded)return;apiLoaded=true;
   window.onYouTubeIframeAPIReady=()=>{
     ytPlayer=new YT.Player("player",{
       width:"100%",height:"100%",videoId:"",
-      playerVars:{controls:1,rel:0,playsinline:1,fs:1,origin:location.origin},
+      playerVars:{controls:0,disablekb:1,rel:0,playsinline:1,fs:0,origin:location.origin},
       events:{
         onReady:()=>{
           ytReady=true;
