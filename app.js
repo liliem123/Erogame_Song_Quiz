@@ -25,13 +25,13 @@ function setCandidateText(text){$("#candidateText").textContent=text||"";}
 
 function getBlockedMap(){
   try{
-    const raw=localStorage.getItem("erogeSongBlockedVideosV10");
+    const raw=localStorage.getItem("erogeSongBlockedVideosV101");
     const obj=raw?JSON.parse(raw):{};
     return obj&&typeof obj==="object"?obj:{};
   }catch(e){return {};}
 }
 function saveBlockedMap(obj){
-  try{localStorage.setItem("erogeSongBlockedVideosV10",JSON.stringify(obj));}catch(e){}
+  try{localStorage.setItem("erogeSongBlockedVideosV101",JSON.stringify(obj));}catch(e){}
 }
 async function blockCandidate(videoId,errorCode,reason){
   const q=current();
@@ -191,11 +191,12 @@ function loadQuestion(){
   $("#vocalHintText").textContent="";
   $("#vocalHint").disabled=false;
 
-  $("#answerAnime").textContent=q.anime||"-";
-  $("#answerSong").textContent=q.song||"-";
-  $("#answerVocal").textContent=q.vocal||"-";
-  $("#answerYear").textContent=q.year||"-";
-  setAnswerImage(q.image||"");
+  // 문제 출제 시점에는 정답 정보/대표 이미지를 DOM에 미리 넣지 않는다.
+  $("#answerAnime").textContent="";
+  $("#answerSong").textContent="";
+  $("#answerVocal").textContent="";
+  $("#answerYear").textContent="";
+  setAnswerImage("");
 
   setRevealedUI(false);
   setupCandidates(q);
@@ -204,6 +205,16 @@ function loadQuestion(){
 
 function expose(){
   state.revealed=true;
+  const q=current();
+
+  // 작품명 + 곡명을 모두 맞혔거나 '정답 공개'를 눌렀을 때만
+  // 대표 이미지와 정답 정보를 실제 화면 요소에 넣는다.
+  $("#answerAnime").textContent=q.anime||q.game||"-";
+  $("#answerSong").textContent=q.song||"-";
+  $("#answerVocal").textContent=q.vocal||"-";
+  $("#answerYear").textContent=q.year||"-";
+  setAnswerImage(q.image||"");
+
   $("#answerbox").hidden=false;
   $("#next").disabled=false;
   setRevealedUI(true);
