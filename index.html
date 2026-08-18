@@ -3,125 +3,168 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>EROGE SONG QUIZ</title>
-  <link rel="stylesheet" href="./style.css?v=101">
+  <title>EROGE SONG QUIZ Multiplayer v2</title>
+  <link rel="stylesheet" href="./style.css?v=200">
 </head>
 <body>
 <main>
   <header class="topbar">
     <div>
-      <h1>EROGE SONG QUIZ</h1>
-      <p>에로게 주제가를 듣고 작품 제목과 곡 제목을 맞혀보세요.</p>
+      <h1>EROGE SONG QUIZ <small>Multiplayer v2</small></h1>
+      <p>각자 정답을 입력하고, 먼저 맞힌 사람의 정답이 모두에게 공개됩니다.</p>
     </div>
-    <div class="top-controls">
-      <div class="mode-switch">
-        <button id="modeAll" class="mode-btn active" type="button">전체 랜덤</button>
-        <button id="modeYear" class="mode-btn" type="button">연도별</button>
-      </div>
-      <select id="yearSelect" hidden></select>
-      <div class="score"><b id="score">0</b><span>점</span></div>
+    <div class="room-head" id="roomHead" hidden>
+      <div><span>ROOM</span><b id="roomCodeLabel">------</b></div>
+      <div><span>PLAYER</span><b id="nicknameLabel">-</b></div>
+      <div><span>SCORE</span><b id="myScoreLabel">0</b></div>
     </div>
   </header>
 
-  <section class="card" id="empty" hidden>
-    <h2>출제 가능한 데이터가 없습니다.</h2>
-    <p>data/quiz.json을 확인해주세요.</p>
-  </section>
+  <section class="card setup-card" id="setup">
+    <h2>멀티플레이 시작</h2>
+    <p class="muted">한 명이 방을 만들고, 친구들은 같은 ROOM CODE로 참가하면 됩니다.</p>
 
-  <section class="card game-card" id="game" hidden>
-    <div class="game-meta">
-      <span id="progress"></span>
-      <strong id="type"></strong>
-      <span id="yearBadge"></span>
+    <div id="firebaseWarning" class="warning" hidden>
+      Firebase 설정이 아직 없습니다. <code>firebase-config.js</code>에 Firebase 설정값을 입력해주세요.
     </div>
 
-    <div class="horizontal-layout">
-      <section class="media-panel">
-        <div class="youtube-visual-shell" id="youtubeVisualShell">
+    <div class="setup-grid">
+      <div class="setup-box">
+        <h3>방 만들기</h3>
+        <label>닉네임</label>
+        <input id="hostNickname" maxlength="16" placeholder="방장 닉네임">
+        <label>문제 방식</label>
+        <select id="hostMode">
+          <option value="all">전체 랜덤</option>
+          <option value="year">연도별</option>
+        </select>
+        <select id="hostYear" hidden></select>
+        <label>문제 수</label>
+        <select id="hostCount">
+          <option value="10">10문제</option>
+          <option value="30">30문제</option>
+          <option value="50">50문제</option>
+          <option value="100">100문제</option>
+          <option value="all">전체</option>
+        </select>
+        <button class="primary wide" id="createRoom">방 만들기</button>
+      </div>
+
+      <div class="setup-box">
+        <h3>방 참가하기</h3>
+        <label>닉네임</label>
+        <input id="joinNickname" maxlength="16" placeholder="참가자 닉네임">
+        <label>ROOM CODE</label>
+        <input id="joinRoomCode" maxlength="6" placeholder="ABC123">
+        <button class="secondary wide" id="joinRoom">방 참가</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="game" hidden>
+    <div class="game-grid">
+      <section class="card quiz-card">
+        <div class="game-meta">
+          <span id="progress">- / -</span>
+          <strong id="type">SONG</strong>
+          <span id="yearBadge"></span>
+          <span id="hostBadge" hidden>방장</span>
+        </div>
+
+        <div class="youtube-visual-shell">
           <div class="video-curtain" id="videoCurtain">
             <div class="musicmark">♪</div>
             <b>음악 듣기</b>
-            <span>영상은 정답 공개 후 표시됩니다</span>
-            <span id="candidateText">YouTube 후보 준비 중...</span>
+            <span>정답 공개 전에는 영상이 가려집니다.</span>
+            <span id="candidateText"></span>
           </div>
-          <div class="youtube-compact" id="youtubeCompact">
-            <div id="player"></div>
-          </div>
+          <div class="youtube-compact"><div id="player"></div></div>
         </div>
 
         <div class="player-tools">
-          <button id="audioPlay" type="button">▶ 재생</button>
-          <button id="audioPause" type="button">⏸ 일시정지</button>
-          <button id="audioRestart" type="button">↺ 처음부터</button>
-          <label>볼륨
-            <input id="volume" type="range" min="0" max="100" value="70">
-          </label>
+          <button id="audioPlay">▶ 재생</button>
+          <button id="audioPause">⏸ 일시정지</button>
+          <button id="audioRestart">↺ 처음부터</button>
+          <label>볼륨 <input id="volume" type="range" min="0" max="100" value="70"></label>
         </div>
-        <div class="player-status">
-          <span id="playerStatus">YouTube API 로딩 중...</span>
-          <span id="diag"></span>
-        </div>
-      </section>
+        <div class="player-status"><span id="playerStatus">YouTube 준비 중...</span></div>
 
-      <section class="answer-panel">
-        <div class="answer-group">
-          <label>작품 제목 <span>+1점</span></label>
-          <div class="answer-row">
-            <div class="autocomplete-wrap">
-              <input id="animeInput" autocomplete="off" placeholder="작품 제목 입력">
-              <div class="suggestions" id="animeSuggestions" hidden></div>
+        <div class="answer-zone">
+          <div class="answer-group" id="gameAnswerGroup">
+            <div class="answer-label">
+              <label>작품 제목</label>
+              <span id="gameLockStatus">+1점</span>
             </div>
-            <button data-check="anime">확인</button>
-          </div>
-          <div class="feedback" id="animeFeedback"></div>
-        </div>
-
-        <div class="answer-group">
-          <label>곡 제목 <span>+1점</span></label>
-          <div class="answer-row">
-            <div class="autocomplete-wrap">
-              <input id="songInput" autocomplete="off" placeholder="곡 제목 입력">
-              <div class="suggestions" id="songSuggestions" hidden></div>
+            <div class="answer-row">
+              <div class="autocomplete-wrap">
+                <input id="gameInput" autocomplete="off" placeholder="2글자 이상 입력">
+                <div class="suggestions" id="gameSuggestions" hidden></div>
+              </div>
+              <button id="submitGame">확인</button>
             </div>
-            <button data-check="song">확인</button>
           </div>
-          <div class="feedback" id="songFeedback"></div>
+
+          <div class="answer-group" id="songAnswerGroup">
+            <div class="answer-label">
+              <label>곡 제목</label>
+              <span id="songLockStatus">+1점</span>
+            </div>
+            <div class="answer-row">
+              <div class="autocomplete-wrap">
+                <input id="songInput" autocomplete="off" placeholder="2글자 이상 입력">
+                <div class="suggestions" id="songSuggestions" hidden></div>
+              </div>
+              <button id="submitSong">확인</button>
+            </div>
+          </div>
         </div>
 
-        <div class="hintline">
-          <button class="ghost" id="vocalHint" type="button">보컬 힌트</button>
-          <span id="vocalHintText"></span>
-        </div>
-
-        <div class="actions">
-          <button class="ghost" id="reveal" type="button">정답 공개</button>
-          <button class="primary" id="next" type="button" disabled>다음 문제</button>
-        </div>
-
-        <div class="answerbox" id="answerbox" hidden>
+        <div class="public-answer" id="publicAnswer" hidden>
           <div class="answer-image-wrap">
-            <img id="answerImage" alt="에로게 대표 이미지" hidden>
-            <div id="imageFallback" class="image-fallback">대표 이미지 없음</div>
+            <img id="answerImage" alt="대표 이미지" hidden>
+            <div id="imageFallback">대표 이미지 없음</div>
           </div>
           <div class="answer-info">
-            <div><span>작품</span><b id="answerAnime"></b></div>
+            <div><span>작품</span><b id="answerGame"></b></div>
             <div><span>곡</span><b id="answerSong"></b></div>
             <div><span>보컬</span><b id="answerVocal"></b></div>
             <div><span>연도</span><b id="answerYear"></b></div>
           </div>
         </div>
+
+        <div class="host-controls" id="hostControls" hidden>
+          <button id="hostReveal" class="secondary">정답 공개</button>
+          <button id="hostNext" class="primary">다음 문제</button>
+        </div>
       </section>
+
+      <aside class="side-column">
+        <section class="card event-card">
+          <h3>실시간 알림</h3>
+          <div id="events" class="events"></div>
+        </section>
+
+        <section class="card ranking-card">
+          <h3>실시간 랭킹</h3>
+          <div id="ranking"></div>
+        </section>
+
+        <section class="card players-card">
+          <h3>참가자 <span id="playerCount">0</span></h3>
+          <div id="players"></div>
+        </section>
+      </aside>
     </div>
   </section>
 
   <section class="card completion-card" id="complete" hidden>
     <h2>퀴즈 완료!</h2>
-    <p>모든 문제를 완료했습니다.</p>
-    <div class="completion-score"><b id="finalScore">0</b><span id="finalMax"> / 0점</span></div>
-    <button id="restartQuiz" class="primary completion-restart" type="button">처음부터 다시 하기</button>
+    <p>모든 문제가 끝났습니다.</p>
+    <div id="finalRanking"></div>
   </section>
 </main>
 
-<script src="./app.js?v=11"></script>
+<script src="./firebase-config.js?v=200"></script>
+<script type="module" src="./multiplayer.js?v=200"></script>
 </body>
 </html>

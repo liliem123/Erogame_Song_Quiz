@@ -1,0 +1,400 @@
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js";
+import {
+  getDatabase, ref, set, get, update, onValue, runTransaction,
+  push, remove, onDisconnect, serverTimestamp
+} from "https://www.gstatic.com/firebasejs/12.2.1/firebase-database.js";
+
+const $=s=>document.querySelector(s);
+const cfg=window.EROGE_FIREBASE_CONFIG||{};
+const configured=cfg.apiKey && !String(cfg.apiKey).includes("PASTE_") &&
+                 cfg.databaseURL && !String(cfg.databaseURL).includes("PASTE_");
+
+let firebaseApp=null, db=null;
+let quizData=[];
+let roomCode="", nickname="", playerId="", isHost=false;
+let roomState=null, playerState={};
+let currentQuestion=null;
+let roomUnsub=null, playersUnsub=null, eventsUnsub=null;
+let ytPlayer=null, ytReady=false, apiLoaded=false;
+let candidateIds=[], candidateIndex=0;
+
+function norm(s){
+  return (s||"").normalize("NFKC").toLowerCase()
+    .replace(/[\s·・'"“”‘’!?.,:;()[\]{}\-_/]/g,"");
+}
+function shuffle(a){
+  for(let i=a.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [a[i],a[j]]=[a[j],a[i]];
+  }
+  return a;
+}
+function uniq(a){return [...new Set(a.filter(Boolean))];}
+function randomCode(){
+  const chars="ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let s="";
+  for(let i=0;i<6;i++)s+=chars[Math.floor(Math.random()*chars.length)];
+  return s;
+}
+function randomPlayerId(){
+  return crypto.randomUUID ? crypto.randomUUID().replaceAll("-","").slice(0,16)
+                           : Math.random().toString(36).slice(2,18);
+}
+function esc(v){
+  return String(v??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
+}
+
+async function loadQuiz(){
+  const r=await fetch(`./data/quiz.json?v=${Date.now()}`,{cache:"no-store"});
+  if(!r.ok)throw new Error(`quiz.json HTTP ${r.status}`);
+  let xs=await r.json();
+  if(!Array.isArray(xs))xs=xs.quiz||xs.items||xs.data||[];
+  quizData=xs.map((x,i)=>({
+    ...x,
+    game:x.game||x.anime||x.title||"",
+    anime:x.anime||x.game||x.title||"",
+    song:x.song||x.songTitle||"",
+    vocal:x.vocal||x.artist||x.singer||"",
+    videoIds:uniq((Array.isArray(x.videoIds)&&x.videoIds.length)?x.videoIds:(x.videoId?[x.videoId]:[])),
+    __index:i
+  })).filter(x=>x.game&&x.song);
+  buildYears();
+}
+
+function buildYears(){
+  const years=uniq(quizData.map(x=>Number(x.year)).filter(Boolean)).sort((a,b)=>b-a);
+  $("#hostYear").innerHTML=years.map(y=>`<option value="${y}">${y}년</option>`).join("");
+}
+$("#hostMode").onchange=e=>{$("#hostYear").hidden=e.target.value!=="year";};
+
+function initFirebase(){
+  if(!configured){
+    $("#firebaseWarning").hidden=false;
+    return false;
+  }
+  firebaseApp=initializeApp(cfg);
+  db=getDatabase(firebaseApp);
+  return true;
+}
+
+function makeOrder(mode,year,count){
+  let pool=quizData.map(x=>x.__index);
+  if(mode==="year")pool=quizData.filter(x=>Number(x.year)===Number(year)).map(x=>x.__index);
+  shuffle(pool);
+  if(count!=="all")pool=pool.slice(0,Math.min(Number(count),pool.length));
+  return pool;
+}
+
+async function createRoom(){
+  if(!db)return alert("Firebase 설정을 먼저 완료해주세요.");
+  const name=$("#hostNickname").value.trim();
+  if(!name)return alert("닉네임을 입력해주세요.");
+  const mode=$("#hostMode").value;
+  const year=mode==="year"?Number($("#hostYear").value):null;
+  const count=$("#hostCount").value;
+  const order=makeOrder(mode,year,count);
+  if(!order.length)return alert("해당 조건의 문제가 없습니다.");
+
+  let code;
+  for(let i=0;i<10;i++){
+    code=randomCode();
+    const snap=await get(ref(db,`rooms/${code}/meta`));
+    if(!snap.exists())break;
+  }
+  roomCode=code; nickname=name; playerId=randomPlayerId(); isHost=true;
+
+  await set(ref(db,`rooms/${roomCode}`),{
+    meta:{
+      hostId:playerId,createdAt:Date.now(),mode,year:year||null,
+      status:"playing",questionIndex:0,questionToken:1,
+      order,gameSolvedBy:null,songSolvedBy:null,forcedReveal:false
+    },
+    players:{
+      [playerId]:{nickname,score:0,joinedAt:Date.now(),online:true}
+    }
+  });
+  await addEvent(`${nickname}님이 방을 만들었습니다.`,"system");
+  enterRoom();
+}
+
+async function joinRoom(){
+  if(!db)return alert("Firebase 설정을 먼저 완료해주세요.");
+  const name=$("#joinNickname").value.trim();
+  const code=$("#joinRoomCode").value.trim().toUpperCase();
+  if(!name||code.length!==6)return alert("닉네임과 6자리 ROOM CODE를 입력해주세요.");
+
+  const roomSnap=await get(ref(db,`rooms/${code}/meta`));
+  if(!roomSnap.exists())return alert("존재하지 않는 방입니다.");
+  if(roomSnap.val().status==="finished")return alert("이미 종료된 방입니다.");
+
+  roomCode=code; nickname=name; playerId=randomPlayerId(); isHost=false;
+  const pref=ref(db,`rooms/${roomCode}/players/${playerId}`);
+  await set(pref,{nickname,score:0,joinedAt:Date.now(),online:true});
+  onDisconnect(pref).update({online:false});
+  await addEvent(`${nickname}님이 참가했습니다.`,"system");
+  enterRoom();
+}
+
+async function addEvent(text,type="system"){
+  if(!db||!roomCode)return;
+  const e=push(ref(db,`rooms/${roomCode}/events`));
+  await set(e,{text,type,at:serverTimestamp()});
+}
+
+function enterRoom(){
+  $("#setup").hidden=true; $("#game").hidden=false; $("#roomHead").hidden=false;
+  $("#roomCodeLabel").textContent=roomCode;
+  $("#nicknameLabel").textContent=nickname;
+  $("#hostBadge").hidden=!isHost;
+  $("#hostControls").hidden=!isHost;
+
+  const pref=ref(db,`rooms/${roomCode}/players/${playerId}`);
+  onDisconnect(pref).update({online:false});
+
+  roomUnsub=onValue(ref(db,`rooms/${roomCode}/meta`),snap=>{
+    if(!snap.exists()){alert("방이 종료되었습니다.");location.reload();return;}
+    const prevToken=roomState?.questionToken;
+    roomState=snap.val();
+    if(roomState.status==="finished"){showComplete();return;}
+    if(prevToken!==roomState.questionToken)loadRoomQuestion();
+    else renderSolvedState();
+  });
+
+  playersUnsub=onValue(ref(db,`rooms/${roomCode}/players`),snap=>{
+    playerState=snap.val()||{};
+    renderPlayers();
+  });
+
+  eventsUnsub=onValue(ref(db,`rooms/${roomCode}/events`),snap=>{
+    renderEvents(snap.val()||{});
+  });
+
+  injectYouTubeAPI();
+}
+
+function getRoomQuestion(){
+  if(!roomState?.order?.length)return null;
+  const qi=Number(roomState.questionIndex||0);
+  const dataIndex=Number(roomState.order[qi]);
+  return quizData.find(x=>x.__index===dataIndex)||quizData[dataIndex]||null;
+}
+
+function loadRoomQuestion(){
+  currentQuestion=getRoomQuestion();
+  if(!currentQuestion)return;
+
+  const total=roomState.order.length;
+  $("#progress").textContent=`${Number(roomState.questionIndex)+1} / ${total}`;
+  $("#type").textContent=currentQuestion.type||"SONG";
+  $("#yearBadge").textContent=currentQuestion.year||"";
+  $("#gameInput").value=""; $("#songInput").value="";
+  hideSuggestions("game");hideSuggestions("song");
+  $("#publicAnswer").hidden=true;
+  $("#videoCurtain").hidden=false;
+
+  setupCandidates(currentQuestion);
+  cueCurrentCandidate();
+  renderSolvedState();
+}
+
+function renderSolvedState(){
+  if(!roomState||!currentQuestion)return;
+  const gs=roomState.gameSolvedBy;
+  const ss=roomState.songSolvedBy;
+  const forced=!!roomState.forcedReveal;
+
+  $("#gameAnswerGroup").classList.toggle("solved",!!gs||forced);
+  $("#songAnswerGroup").classList.toggle("solved",!!ss||forced);
+  $("#gameInput").disabled=!!gs||forced;
+  $("#songInput").disabled=!!ss||forced;
+  $("#submitGame").disabled=!!gs||forced;
+  $("#submitSong").disabled=!!ss||forced;
+
+  $("#gameLockStatus").textContent=gs?`${gs.nickname} 정답!`:forced?"공개됨":"+1점";
+  $("#songLockStatus").textContent=ss?`${ss.nickname} 정답!`:forced?"공개됨":"+1점";
+
+  if(gs||ss||forced){
+    $("#publicAnswer").hidden=false;
+    $("#answerGame").textContent=(gs||forced)?currentQuestion.game:"???";
+    $("#answerSong").textContent=(ss||forced)?currentQuestion.song:"???";
+    $("#answerVocal").textContent=(ss||forced)?(currentQuestion.vocal||"-"):"???";
+    $("#answerYear").textContent=(gs||forced)?(currentQuestion.year||"-"):"???";
+    setImage((gs&&ss)||forced ? currentQuestion.image : "");
+  }else{
+    $("#publicAnswer").hidden=true;
+  }
+
+  // 영상은 둘 다 맞혀졌거나 방장이 강제 공개했을 때만 공개
+  $("#videoCurtain").hidden=!!((gs&&ss)||forced);
+}
+
+function setImage(url){
+  const img=$("#answerImage"), fb=$("#imageFallback");
+  if(url){
+    img.hidden=false;fb.hidden=true;img.src=url;
+    img.onerror=()=>{img.hidden=true;fb.hidden=false;};
+  }else{img.hidden=true;fb.hidden=false;img.removeAttribute("src");}
+}
+
+async function submitAnswer(kind){
+  if(!roomState||!currentQuestion)return;
+  const solvedKey=kind==="game"?"gameSolvedBy":"songSolvedBy";
+  if(roomState[solvedKey]||roomState.forcedReveal)return;
+
+  const input=kind==="game"?$("#gameInput"):$("#songInput");
+  const answer=kind==="game"?currentQuestion.game:currentQuestion.song;
+  if(norm(input.value)!==norm(answer))return;
+
+  // 서버 트랜잭션으로 "최초 정답자 1명"만 확정한다.
+  const solveRef=ref(db,`rooms/${roomCode}/meta/${solvedKey}`);
+  const tx=await runTransaction(solveRef,current=>{
+    if(current)return; // someone already won this answer
+    return {playerId,nickname,at:Date.now()};
+  });
+
+  if(tx.committed && tx.snapshot.val()?.playerId===playerId){
+    await runTransaction(ref(db,`rooms/${roomCode}/players/${playerId}/score`),s=>Number(s||0)+1);
+    await addEvent(`${nickname}님이 ${kind==="game"?"작품":"곡"} 정답!  ${answer}`,"correct");
+  }
+}
+
+function sourceValues(kind){
+  return uniq(quizData.map(x=>kind==="game"?x.game:x.song));
+}
+function updateSuggestions(kind){
+  const input=kind==="game"?$("#gameInput"):$("#songInput");
+  const box=kind==="game"?$("#gameSuggestions"):$("#songSuggestions");
+  const raw=input.value.trim();
+  if(raw.length<2){hideSuggestions(kind);return;}
+  const n=norm(raw);
+  const matches=sourceValues(kind).filter(v=>norm(v).includes(n)).slice(0,12);
+  if(!matches.length){hideSuggestions(kind);return;}
+  box.innerHTML="";
+  for(const value of matches){
+    const b=document.createElement("button");b.type="button";b.className="suggestion-item";b.textContent=value;
+    b.onclick=()=>{input.value=value;hideSuggestions(kind);input.focus();};
+    box.appendChild(b);
+  }
+  box.hidden=false;
+}
+function hideSuggestions(kind){
+  const box=kind==="game"?$("#gameSuggestions"):$("#songSuggestions");
+  box.hidden=true;box.innerHTML="";
+}
+
+async function hostReveal(){
+  if(!isHost)return;
+  await update(ref(db,`rooms/${roomCode}/meta`),{forcedReveal:true});
+  await addEvent("방장이 정답을 공개했습니다.","system");
+}
+async function hostNext(){
+  if(!isHost)return;
+  const next=Number(roomState.questionIndex||0)+1;
+  if(next>=roomState.order.length){
+    await update(ref(db,`rooms/${roomCode}/meta`),{status:"finished"});
+    await addEvent("퀴즈가 종료되었습니다.","system");
+    return;
+  }
+  await update(ref(db,`rooms/${roomCode}/meta`),{
+    questionIndex:next,questionToken:Number(roomState.questionToken||0)+1,
+    gameSolvedBy:null,songSolvedBy:null,forcedReveal:false
+  });
+  await addEvent(`${next+1}번 문제 시작!`,"system");
+}
+
+function renderPlayers(){
+  const arr=Object.entries(playerState).map(([id,p])=>({id,...p})).sort((a,b)=>(b.score||0)-(a.score||0));
+  $("#playerCount").textContent=arr.filter(x=>x.online!==false).length;
+  $("#players").innerHTML=arr.map((p,i)=>`
+    <div class="player-row ${p.id===playerId?"me":""}">
+      <span>${p.online===false?"○":"●"}</span>
+      <span>${esc(p.nickname)} ${p.id===roomState?.hostId?'<em class="hostmark">HOST</em>':""}</span>
+      <b>${p.score||0}</b>
+    </div>`).join("");
+  $("#ranking").innerHTML=arr.slice(0,10).map((p,i)=>`
+    <div class="rank-row ${p.id===playerId?"me":""}">
+      <b>${i+1}</b><span>${esc(p.nickname)}</span><b>${p.score||0}</b>
+    </div>`).join("");
+  $("#myScoreLabel").textContent=playerState[playerId]?.score||0;
+}
+function renderEvents(obj){
+  const arr=Object.values(obj).sort((a,b)=>(a.at||0)-(b.at||0)).slice(-50);
+  $("#events").innerHTML=arr.map(e=>`<div class="event ${e.type||"system"}">${esc(e.text)}</div>`).join("");
+  $("#events").scrollTop=$("#events").scrollHeight;
+}
+function showComplete(){
+  $("#game").hidden=true;$("#complete").hidden=false;
+  const arr=Object.entries(playerState).map(([id,p])=>({id,...p})).sort((a,b)=>(b.score||0)-(a.score||0));
+  $("#finalRanking").innerHTML=arr.map((p,i)=>`
+    <div class="rank-row ${p.id===playerId?"me":""}">
+      <b>${i+1}</b><span>${esc(p.nickname)}</span><b>${p.score||0}점</b>
+    </div>`).join("");
+  if(ytReady&&ytPlayer)try{ytPlayer.pauseVideo()}catch(e){}
+}
+
+// YouTube player
+function injectYouTubeAPI(){
+  if(apiLoaded)return;apiLoaded=true;
+  window.onYouTubeIframeAPIReady=()=>{
+    ytPlayer=new YT.Player("player",{
+      width:"100%",height:"100%",videoId:"",
+      playerVars:{controls:1,rel:0,playsinline:1,fs:1,origin:location.origin},
+      events:{
+        onReady:()=>{ytReady=true;ytPlayer.setVolume(Number($("#volume").value)||70);if(currentQuestion)cueCurrentCandidate();},
+        onStateChange:e=>{
+          if(e.data===YT.PlayerState.PLAYING)$("#playerStatus").textContent="재생 중";
+          else if(e.data===YT.PlayerState.PAUSED)$("#playerStatus").textContent="일시정지";
+          else if(e.data===YT.PlayerState.BUFFERING)$("#playerStatus").textContent="버퍼링 중...";
+        },
+        onError:e=>{
+          if([100,101,150].includes(e.data)&&candidateIndex+1<candidateIds.length){
+            candidateIndex++;setTimeout(cueCurrentCandidate,250);
+          }else $("#playerStatus").textContent=`YouTube 오류 ${e.data}`;
+        },
+        onAutoplayBlocked:()=>$("#playerStatus").textContent="자동재생 차단 · 재생 버튼을 눌러주세요"
+      }
+    });
+  };
+  const s=document.createElement("script");s.src="https://www.youtube.com/iframe_api";document.head.appendChild(s);
+}
+function setupCandidates(q){
+  candidateIds=uniq((q.videoIds&&q.videoIds.length)?q.videoIds:(q.videoId?[q.videoId]:[]));candidateIndex=0;
+  $("#candidateText").textContent=`후보 ${candidateIds.length}개`;
+}
+function cueCurrentCandidate(){
+  if(!ytReady||!ytPlayer||!candidateIds.length)return;
+  $("#candidateText").textContent=`후보 ${candidateIndex+1}/${candidateIds.length}`;
+  ytPlayer.loadVideoById({videoId:candidateIds[candidateIndex],startSeconds:0});
+  ytPlayer.setVolume(Number($("#volume").value)||70);
+}
+let apiLoaded=false;
+
+$("#audioPlay").onclick=()=>{if(ytReady)ytPlayer.playVideo();};
+$("#audioPause").onclick=()=>{if(ytReady)ytPlayer.pauseVideo();};
+$("#audioRestart").onclick=()=>{if(ytReady){ytPlayer.seekTo(0,true);ytPlayer.playVideo();}};
+$("#volume").oninput=e=>{if(ytReady)ytPlayer.setVolume(Number(e.target.value));};
+
+$("#createRoom").onclick=createRoom;
+$("#joinRoom").onclick=joinRoom;
+$("#submitGame").onclick=()=>submitAnswer("game");
+$("#submitSong").onclick=()=>submitAnswer("song");
+$("#gameInput").oninput=()=>updateSuggestions("game");
+$("#songInput").oninput=()=>updateSuggestions("song");
+$("#gameInput").onkeydown=e=>{if(e.key==="Enter")submitAnswer("game");};
+$("#songInput").onkeydown=e=>{if(e.key==="Enter")submitAnswer("song");};
+$("#hostReveal").onclick=hostReveal;
+$("#hostNext").onclick=hostNext;
+document.addEventListener("click",e=>{
+  if(!e.target.closest(".autocomplete-wrap")){hideSuggestions("game");hideSuggestions("song");}
+});
+
+(async()=>{
+  try{
+    await loadQuiz();
+    initFirebase();
+  }catch(e){
+    console.error(e);
+    $("#firebaseWarning").hidden=false;
+    $("#firebaseWarning").textContent=`초기화 오류: ${e.message}`;
+  }
+})();
